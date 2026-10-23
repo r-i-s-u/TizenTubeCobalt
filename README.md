@@ -1,4 +1,4 @@
-# 💠 TizenTube Cobalt
+# 💠 TizenTube CobalT
 
 <p align="center">
     <img width="600px" src=".github/assets/TizenTube Cobalt Banner.png">
