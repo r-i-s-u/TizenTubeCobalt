@@ -60,8 +60,12 @@ jobs:
       - name: Build
         working-directory: src
         run: |
-          cobalt/build/gn.py -p ${{ inputs.platform }} -c ${{ inputs.config }}
-          autoninja -C out/${{ inputs.platform }}_${{ inputs.config }} ${{ inputs.target }}
+          OUT=out/${{ inputs.platform }}_${{ inputs.config }}
+          cobalt/build/gn.py -p ${{ inputs.platform }} -c ${{ inputs.config }} || true
+          echo 'use_remoteexec = false' >> $OUT/args.gn
+          gn gen $OUT
+          cat $OUT/args.gn
+          autoninja -C $OUT ${{ inputs.target }}
 
       - name: Collect APK
         working-directory: src
