@@ -55,7 +55,8 @@
     {% endblock %}
 
     <application android:name="{% block application_name %}dev.cobalt.app.CobaltApplication{% endblock %}"
-            android:icon="@mipmap/ic_app"
+            android:logo="@mipmap/ic_app"
+            android:icon="@mipmap/ic_launcher" 
             android:banner="@drawable/app_banner"
             android:zygotePreloadName="org.chromium.content_public.app.ZygotePreload"
             {# Always enable debuggable=true for development. This manifest is only used for the development shell (CoAT) and does not affect the production Kimono app. #}
