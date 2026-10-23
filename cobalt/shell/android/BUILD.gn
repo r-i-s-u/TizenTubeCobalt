@@ -27,17 +27,16 @@ generate_jni("cobalt_shell_jni_headers") {
 
 android_resources("cobalt_shell_java_resources") {
   sources = [
-    "java/res/drawable-hdpi/app_banner.png",
-    "java/res/drawable-mdpi/app_banner.png",
-    "java/res/drawable-xhdpi/app_banner.png",
-    "java/res/drawable-xxhdpi/app_banner.png",
-    "java/res/drawable-xxxhdpi/app_banner.png",
+    "java/res/drawable/app_banner.png",
     "java/res/layout/coat_error_dialog.xml",
     "java/res/mipmap-hdpi/ic_app.png",
     "java/res/mipmap-mdpi/ic_app.png",
     "java/res/mipmap-xhdpi/ic_app.png",
-    "java/res/mipmap-xxhdpi/ic_app.png",
-    "java/res/mipmap-xxxhdpi/ic_app.png",
+    "java/res/mipmap-hdpi/ic_launcher.png",
+    "java/res/mipmap-mdpi/ic_launcher.png",
+    "java/res/mipmap-xhdpi/ic_launcher.png",
+    "java/res/mipmap-xxhdpi/ic_launcher.png",
+    "java/res/mipmap-xxxhdpi/ic_launcher.png",
     "java/res/values/colors.xml",
     "java/res/values/ids.xml",
     "java/res/values/overlayable.xml",
