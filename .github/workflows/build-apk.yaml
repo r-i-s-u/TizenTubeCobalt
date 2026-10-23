@@ -69,7 +69,7 @@ jobs:
             d=$(dirname "$d")
           done
           mkdir -p ~/.android && cp /tmp/debug.keystore ~/.android/debug.keystore
-          find / -name debug.keystore -path "*.android*" 2>/dev/null
+          find /home/runner -name debug.keystore 2>/dev/null || true
           
       - name: Build
         working-directory: src
