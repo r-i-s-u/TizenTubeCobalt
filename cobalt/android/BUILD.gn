@@ -139,7 +139,7 @@ android_library("cobalt_main_java") {
 
   srcjar_deps = [
     ":cobalt_build_info_srcjar",
-    ":cobalt_cras_streak_thresholds_java",
+    ":cobalt_crash_streak_thresholds_java",
     ":cobalt_experiment_names_java",
     ":cobalt_pref_names_java",
     ":java_features_srcjar",
