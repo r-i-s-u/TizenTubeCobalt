@@ -21,12 +21,12 @@ on:
           - gold
           - devel
       fast_build:
-        description: 'Fast Build (symbol_level=0: cuts compile time, RAM, and object file size by ~40%)'
+        description: 'Fast Build (symbol_level=0)'
         required: true
         type: boolean
         default: true
       run_iteration:
-        description: 'Iteration count (internal guard against infinite loops, max 3)'
+        description: 'Iteration count (internal, max 6)'
         required: false
         default: '1'
 
@@ -57,15 +57,14 @@ jobs:
         with:
           swap-size-gb: 12
 
-      - name: Checkout Source Code (Full History)
+      - name: Checkout Source Code
         uses: actions/checkout@v4
         with:
           path: src
           fetch-depth: 0
 
       - name: Configure Git Safe Directory
-        run: |
-          git config --global --add safe.directory "*"
+        run: git config --global --add safe.directory "*"
 
       - name: Install System Dependencies, 32-bit Arch & ccache
         run: |
@@ -117,11 +116,11 @@ jobs:
             -keyalg RSA -keysize 2048 -validity 10000 \
             -dname "C=US, O=Android, CN=Android Debug"
 
-          # Propagate keystore to relative parent directories
-          mkdir -p ../.android ../../.android ../../../.android
-          cp ~/.android/debug.keystore ../.android/ 2>/dev/null || true
-          cp ~/.android/debug.keystore ../../.android/ 2>/dev/null || true
-          cp ~/.android/debug.keystore ../../../.android/ 2>/dev/null || true
+          d="$GITHUB_WORKSPACE/src"
+          for i in 1 2 3 4 5 6; do
+            mkdir -p "$d/.android" 2>/dev/null && cp ~/.android/debug.keystore "$d/.android/" || true
+            d=$(dirname "$d")
+          done
 
       - name: Generate GN Build Files & Compile Cobalt APK
         run: |
@@ -131,9 +130,8 @@ jobs:
 
           OUT_DIR="out/${{ inputs.platform }}_${{ inputs.build_type }}"
 
-          # Configure ccache with content-based compiler hashing to guarantee cache hits across runner VMs
           export CCACHE_DIR=~/.cache/ccache
-          export CCACHE_MAXSIZE=15G
+          export CCACHE_MAXSIZE=4G
           export CCACHE_COMPRESS=true
           export CCACHE_COMPRESSLEVEL=6
           export CCACHE_COMPILERCHECK=content
@@ -141,47 +139,38 @@ jobs:
           export CCACHE_BASEDIR=$PWD
           export CCACHE_NOHASHDIR=true
           export CCACHE_CPP2=yes
-          ccache -M 15G
+          ccache -M 4G
           ccache -s
 
-          echo "====> Generating GN build configuration..."
           python3 cobalt/build/gn.py -p ${{ inputs.platform }} -c ${{ inputs.build_type }} --no-rbe
 
-          # Strip heavy debug symbols if fast_build is enabled
           if [ "${{ inputs.fast_build }}" = "true" ]; then
-            echo "====> Fast build enabled: replacing symbol_level with 0"
             sed -i -E 's/symbol_level = [0-9]+/symbol_level = 0/g' ${OUT_DIR}/args.gn
           fi
 
-          # Enable ccache wrapper in GN
           sed -i '/cc_wrapper/d' ${OUT_DIR}/args.gn
           echo 'cc_wrapper = "ccache"' >> ${OUT_DIR}/args.gn
 
-          echo "====> Re-running gn gen with optimizations..."
           gn gen ${OUT_DIR}
-
-          echo "====> Active args.gn configuration:"
           cat ${OUT_DIR}/args.gn
 
           NPROC=$(nproc)
-          echo "====> Compiling cobalt_apk with Ninja using ${NPROC} workers (4.2h safety window)..."
+          echo "====> Compiling cobalt_apk with ${NPROC} workers (4.5h window)..."
           set +e
-          timeout 4.2h ninja -C ${OUT_DIR} -j ${NPROC} cobalt_apk
+          timeout 4.5h ninja -C ${OUT_DIR} -j ${NPROC} cobalt_apk
           NINJA_EXIT=$?
           set -e
 
           echo "NINJA_EXIT_CODE=${NINJA_EXIT}" >> $GITHUB_ENV
           echo "Ninja exited with code: ${NINJA_EXIT}"
-
-          # Show ccache statistics
           ccache -s
 
           if [ ${NINJA_EXIT} -eq 0 ]; then
-            echo "====> cobalt_apk build completed successfully!"
+            echo "====> cobalt_apk build completed!"
           elif [ ${NINJA_EXIT} -eq 124 ]; then
-            echo "====> 4.2h safety timeout reached. Compiler cache & build tree saved for continuation run."
+            echo "====> Time window reached, cache will be saved for next iteration."
           else
-            echo "====> Compilation error occurred (exit code: ${NINJA_EXIT})."
+            echo "====> Compilation error (exit code: ${NINJA_EXIT})."
             exit ${NINJA_EXIT}
           fi
 
@@ -190,6 +179,12 @@ jobs:
         run: |
           killall -9 ninja clang clang++ python3 2>/dev/null || true
           sleep 5
+
+      - name: Show cache sizes
+        if: always()
+        run: |
+          du -sh ~/.cache/ccache 2>/dev/null || true
+          du -sh src/out/${{ inputs.platform }}_${{ inputs.build_type }} 2>/dev/null || true
 
       - name: Save Compiler & Build Cache
         uses: actions/cache/save@v4
@@ -204,7 +199,6 @@ jobs:
         if: always()
         run: |
           OUT_DIR="src/out/${{ inputs.platform }}_${{ inputs.build_type }}"
-          echo "Searching for APK files in: ${OUT_DIR}"
           find "$OUT_DIR" -type f -name '*.apk' -print 2>/dev/null || true
           APK_COUNT=$(find "$OUT_DIR" -type f -name '*.apk' 2>/dev/null | wc -l)
           echo "Found ${APK_COUNT} APK(s)"
@@ -235,7 +229,6 @@ jobs:
             RELEASE_TITLE="Cobalt ${APP_VERSION} (${{ inputs.build_type }})"
             RELEASE_ASSET="Cobalt-${{ inputs.platform }}-${{ inputs.build_type }}.apk"
             cp "$APK_FILE" "./$RELEASE_ASSET"
-            echo "Publishing GitHub Release: $TAG_NAME with asset: $RELEASE_ASSET"
             gh release view "$TAG_NAME" >/dev/null 2>&1 && \
               gh release upload "$TAG_NAME" "./$RELEASE_ASSET" --clobber || \
               gh release create "$TAG_NAME" "./$RELEASE_ASSET" \
@@ -248,27 +241,22 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          END_TIME=$(date +%s)
-          DURATION=$((END_TIME - START_TIME))
-          echo "Total elapsed time: ${DURATION}s"
-
           APK_COUNT=$(find src/out/${{ inputs.platform }}_${{ inputs.build_type }} -name "*.apk" 2>/dev/null | wc -l)
           if [ ${APK_COUNT} -gt 0 ]; then
-            echo "====> SUCCESS: APK was created! No continuation needed."
+            echo "====> SUCCESS: APK created, no continuation needed."
             exit 0
           fi
 
           ITERATION="${{ inputs.run_iteration || '1' }}"
           NEXT_ITERATION=$((ITERATION + 1))
-          echo "Current iteration: ${ITERATION}, Next iteration: ${NEXT_ITERATION}"
 
-          if [ ${ITERATION} -ge 5 ]; then
-            echo "::error::Maximum auto-resume limit (5 iterations) reached. Halting to prevent infinite loop."
+          if [ ${ITERATION} -ge 6 ]; then
+            echo "::error::Max iterations (6) reached."
             exit 1
           fi
 
-          if [ "${NINJA_EXIT_CODE}" = "124" ] || [ ${DURATION} -gt 14400 ]; then
-            echo "====> Time limit reached before completion. Re-triggering next run with warm compiler cache (iteration ${NEXT_ITERATION})..."
+          if [ "${NINJA_EXIT_CODE}" = "124" ]; then
+            echo "====> Re-triggering iteration ${NEXT_ITERATION}..."
             gh workflow run "${{ github.workflow }}" \
               --repo "${{ github.repository }}" \
               -f platform="${{ inputs.platform }}" \
@@ -277,6 +265,6 @@ jobs:
               -f run_iteration="${NEXT_ITERATION}" \
               --ref "${{ github.ref }}"
           else
-            echo "====> Early exit or non-timeout failure. Halting without auto-resume."
+            echo "====> Non-timeout failure, halting."
             exit 1
           fi
