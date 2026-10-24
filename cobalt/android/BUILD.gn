@@ -20,7 +20,7 @@ jinja_template("cobalt_manifest") {
   input = "//cobalt/shell/android/shell_apk/AndroidManifest.xml.jinja2"
   output = cobalt_manifest
   variables = [
-    "manifest_package=io.gh.reisxd.tizentube.cobalt",
+    "manifest_package=com.amazon.firetv.youtube",
     "build_type=$build_type",
   ]
 }
@@ -139,7 +139,7 @@ android_library("cobalt_main_java") {
 
   srcjar_deps = [
     ":cobalt_build_info_srcjar",
-    ":cobalt_crash_streak_thresholds_java",
+    ":cobalt_cras_streak_thresholds_java",
     ":cobalt_experiment_names_java",
     ":cobalt_pref_names_java",
     ":java_features_srcjar",
