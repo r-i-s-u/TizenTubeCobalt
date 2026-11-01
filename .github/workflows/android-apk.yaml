@@ -1,0 +1,88 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Android architecture to build
+        type: choice
+        options:
+          - android-arm64
+          - android-arm
+          - android-x86
+        default: android-arm64
+      checkpoint_key:
+        description: Optional checkpoint cache key from a previous stage (same commit)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: apk-${{ github.ref }}-${{ inputs.platform || 'android-arm64' }}
+  # Let an active job save its progress before a newer run starts.
+  cancel-in-progress: false
+
+jobs:
+  test_checkpoints:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Validate Android resources before compilation
+        run: python3 .github/scripts/check_apk_resources.py
+      - name: Install checkpoint test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build g++ zstd
+      - name: Test interrupted Ninja build and checkpoint restore
+        run: python3 .github/scripts/test_apk_checkpoint.py -v
+
+  build_1:
+    needs: test_checkpoints
+    uses: ./.github/workflows/apk-build-stage.yaml
+    with:
+      platform: ${{ inputs.platform || 'android-arm64' }}
+      stage: 1
+      checkpoint: ${{ inputs.checkpoint_key || '' }}
+
+  build_2:
+    needs: build_1
+    if: needs.build_1.outputs.complete == 'false'
+    uses: ./.github/workflows/apk-build-stage.yaml
+    with:
+      platform: ${{ inputs.platform || 'android-arm64' }}
+      stage: 2
+      checkpoint: ${{ needs.build_1.outputs.checkpoint }}
+
+  build_3:
+    needs: build_2
+    if: needs.build_2.outputs.complete == 'false'
+    uses: ./.github/workflows/apk-build-stage.yaml
+    with:
+      platform: ${{ inputs.platform || 'android-arm64' }}
+      stage: 3
+      checkpoint: ${{ needs.build_2.outputs.checkpoint }}
+
+  result:
+    needs: [build_1, build_2, build_3]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verify APK was produced
+        env:
+          COMPLETE_1: ${{ needs.build_1.outputs.complete }}
+          COMPLETE_2: ${{ needs.build_2.outputs.complete }}
+          COMPLETE_3: ${{ needs.build_3.outputs.complete }}
+        run: |
+          if [[ "$COMPLETE_1" == 'true' || "$COMPLETE_2" == 'true' || "$COMPLETE_3" == 'true' ]]; then
+            echo 'APK complete. Download the Cobalt artifact.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '::error::No APK was produced. Check the failed stage logs. If all three build slices were used, resume with the last checkpoint from the stage summary and the same commit.'
+            exit 1
+          fi

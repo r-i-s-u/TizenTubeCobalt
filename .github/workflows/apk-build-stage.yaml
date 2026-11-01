@@ -1,0 +1,234 @@
+name: Android APK build stage
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        required: true
+        type: string
+      stage:
+        required: true
+        type: number
+      checkpoint:
+        type: string
+        default: ''
+    outputs:
+      complete:
+        value: ${{ jobs.build.outputs.complete }}
+      checkpoint:
+        value: ${{ jobs.build.outputs.checkpoint }}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: ${{ vars.APK_BUILD_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 360
+    outputs:
+      complete: ${{ steps.finish.outputs.complete }}
+      checkpoint: ${{ steps.pack.outputs.name }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      PLATFORM: ${{ inputs.platform }}
+      BUILD_JOBS: ${{ vars.APK_BUILD_JOBS || '4' }}
+      DEPOT_TOOLS_UPDATE: '0'
+      DEPOT_TOOLS_METRICS: '0'
+      DEPOT_TOOLS_REPORT_BUILD: '0'
+      DEPOT_TOOLS_COLLECT_METRICS: '0'
+      DEPOT_TOOLS_WIN_TOOLCHAIN: '0'
+
+    steps:
+      - name: Free space on the standard GitHub runner
+        if: vars.APK_BUILD_RUNNER == '' || vars.APK_BUILD_RUNNER == 'ubuntu-24.04'
+        run: |
+          # Android SDK, NDK and JDK will be supplied by Chromium's pinned DEPS.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache /usr/local/share/powershell \
+            /usr/share/swift
+          docker image prune --all --force
+          df -h "$GITHUB_WORKSPACE"
+
+      - name: Checkout source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          path: cobalt/src
+          persist-credentials: false
+          # gclient fetches the dependencies itself, without checking out submodules.
+          submodules: false
+
+      - name: Download previous build stage
+        if: inputs.checkpoint != ''
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          key: ${{ inputs.checkpoint }}
+          path: .apk-checkpoint/checkpoint.tar.zst
+          fail-on-cache-miss: true
+
+      - name: Prepare checkpoint storage probe
+        run: |
+          mkdir -p .apk-checkpoint
+          echo 'checkpoint storage access check' > .apk-checkpoint/probe
+
+      - name: Check checkpoint storage write access before compiling
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          key: apk-probe-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.stage }}
+          path: .apk-checkpoint/probe
+
+      - name: Verify checkpoint storage is writable
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          key: apk-probe-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.stage }}
+          path: .apk-checkpoint/probe
+          lookup-only: true
+          fail-on-cache-miss: true
+
+      - name: Install host dependencies
+        working-directory: cobalt/src
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl git python3 lsb-release xz-utils zstd
+          sudo python3 build/install-build-deps.py --android --no-prompt --no-chromeos-fonts
+
+      - name: Set up depot_tools
+        run: |
+          git init "$RUNNER_TEMP/depot_tools"
+          git -C "$RUNNER_TEMP/depot_tools" remote add origin \
+            https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          # Same revision as the existing Cobalt CI, with automatic updates disabled.
+          git -C "$RUNNER_TEMP/depot_tools" fetch --depth=1 origin \
+            4a978d8f1f3567d5bd729aec018bfc345a14e1cd
+          git -C "$RUNNER_TEMP/depot_tools" checkout --detach FETCH_HEAD
+          echo "$RUNNER_TEMP/depot_tools" >> "$GITHUB_PATH"
+          source "$RUNNER_TEMP/depot_tools/bootstrap_python3"
+          bootstrap_python3
+
+      - name: Sync public Android dependencies
+        working-directory: cobalt
+        env:
+          REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          gclient config --name=src \
+            --custom-var='checkout_configuration="small"' \
+            "$REPOSITORY_URL"
+          echo "target_os = ['android']" >> .gclient
+          gclient sync --shallow --no-history --nohooks --jobs=4 \
+            --revision "src@$GITHUB_SHA"
+          gclient runhooks
+
+      - name: Normalize source timestamps for incremental Ninja builds
+        run: python3 cobalt/src/.github/scripts/apk_checkpoint.py normalize
+
+      - name: Restore compiled outputs
+        if: inputs.checkpoint != ''
+        run: |
+          python3 cobalt/src/.github/scripts/apk_checkpoint.py restore \
+            --archive "$GITHUB_WORKSPACE/.apk-checkpoint/checkpoint.tar.zst"
+          rm -f "$GITHUB_WORKSPACE/.apk-checkpoint/checkpoint.tar.zst"
+
+      - name: Create development signing key for a fresh build
+        if: inputs.checkpoint == ''
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.android"
+          cobalt/src/third_party/jdk/current/bin/keytool -genkeypair \
+            -keystore "$GITHUB_WORKSPACE/.android/debug.keystore" \
+            -storepass android -keypass android -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US" -noprompt
+
+      - name: Configure local APK build
+        if: inputs.checkpoint == ''
+        working-directory: cobalt/src
+        run: |
+          cobalt/build/gn.py -p "$PLATFORM" -C qa --no-rbe
+          cat >> "out/${PLATFORM}_qa/args.gn" <<'ARGS'
+          symbol_level = 0
+          use_remoteexec = false
+          use_siso = false
+          ARGS
+          gn gen "out/${PLATFORM}_qa" --check
+
+      - name: Build for at most four hours, reserving time to save progress
+        id: compile
+        working-directory: cobalt/src
+        run: |
+          if [[ ! "$BUILD_JOBS" =~ ^[1-9][0-9]*$ ]]; then
+            echo '::error::APK_BUILD_JOBS must be a positive integer.'
+            exit 1
+          fi
+          nproc
+          free -h
+          df -h .
+          set +e
+          timeout --signal=INT --kill-after=120s 240m \
+            autoninja -C "out/${PLATFORM}_qa" -j "$BUILD_JOBS" cobalt/android:cobalt_apk
+          build_status=$?
+          set -e
+          case "$build_status" in
+            0)
+              if [[ ! -s "out/${PLATFORM}_qa/apks/Cobalt.apk" ]]; then
+                echo '::error::Ninja exited successfully but Cobalt.apk is missing or empty.'
+                exit 1
+              fi
+              echo 'complete=true' >> "$GITHUB_OUTPUT"
+              ;;
+            124) echo 'complete=false' >> "$GITHUB_OUTPUT" ;;
+            *) exit "$build_status" ;;
+          esac
+
+      - name: Pack checkpoint including Ninja databases and signing key
+        id: pack
+        if: steps.compile.outputs.complete == 'false'
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          python3 cobalt/src/.github/scripts/apk_checkpoint.py pack \
+            --archive "$GITHUB_WORKSPACE/.apk-checkpoint/checkpoint.tar.zst"
+          echo "name=apk-checkpoint-${PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${STAGE}" >> "$GITHUB_OUTPUT"
+          du -h "$GITHUB_WORKSPACE/.apk-checkpoint/checkpoint.tar.zst"
+
+      - name: Save build progress
+        if: steps.compile.outputs.complete == 'false'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          key: ${{ steps.pack.outputs.name }}
+          path: .apk-checkpoint/checkpoint.tar.zst
+
+      - name: Verify checkpoint was saved before starting the next stage
+        if: steps.compile.outputs.complete == 'false'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          key: ${{ steps.pack.outputs.name }}
+          path: .apk-checkpoint/checkpoint.tar.zst
+          lookup-only: true
+          fail-on-cache-miss: true
+
+      - name: Upload completed APK
+        if: steps.compile.outputs.complete == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Cobalt-${{ env.PLATFORM }}-${{ github.run_number }}
+          path: cobalt/src/out/${{ env.PLATFORM }}_qa/apks/Cobalt.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Report stage result
+        id: finish
+        env:
+          COMPLETE: ${{ steps.compile.outputs.complete }}
+          CHECKPOINT: ${{ steps.pack.outputs.name }}
+        run: |
+          echo "complete=$COMPLETE" >> "$GITHUB_OUTPUT"
+          if [[ "$COMPLETE" == 'true' ]]; then
+            echo 'APK build complete. Download the Cobalt artifact.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo 'Compiled progress saved; the next stage continues automatically.'
+              echo "Checkpoint cache key: $CHECKPOINT"
+              echo "For a later manual resume, use checkpoint_key=$CHECKPOINT with this same commit."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
