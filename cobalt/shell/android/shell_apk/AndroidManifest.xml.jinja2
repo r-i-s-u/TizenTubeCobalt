@@ -56,7 +56,6 @@
 
     <application android:name="{% block application_name %}dev.cobalt.app.CobaltApplication{% endblock %}"
             android:icon="@mipmap/ic_app"
-            android:banner="@drawable/app_banner"
             android:zygotePreloadName="org.chromium.content_public.app.ZygotePreload"
             {# Always enable debuggable=true for development. This manifest is only used for the development shell (CoAT) and does not affect the production Kimono app. #}
             android:debuggable="true"
@@ -67,6 +66,7 @@
         <activity android:name="dev.cobalt.app.MainActivity"
                   android:launchMode="singleTask"
                   android:theme="@style/CobaltTheme"
+                  android:banner="@drawable/app_banner"
                   android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|smallestScreenSize|screenLayout|uiMode"
                   android:windowSoftInputMode="adjustResize"
                   android:supportsPictureInPicture="true"
