@@ -85,8 +85,8 @@ build b.o: slow_compile ../../b.cc | a.o
 build app: link a.o b.o
 ''')
     interrupted = subprocess.run([
-        'timeout', '--signal=INT', '--kill-after=2s', '1s', 'ninja', '-C',
-        str(self.output), '-j', '1', 'app'
+        'timeout', '--signal=INT', '--kill-after=3s', '3s', 'ninja', '-C',
+str(self.output), '-j', '1', 'app'
     ],
                                  capture_output=True,
                                  text=True,
