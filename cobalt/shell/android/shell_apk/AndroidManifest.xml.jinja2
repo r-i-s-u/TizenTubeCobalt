@@ -100,6 +100,12 @@
               <data android:pathPattern=".*"/>
             </intent-filter>
         </activity>
+        {% if manifest_package == 'com.amazon.firetv.youtube' %}
+        <!-- The Fire TV YouTube launcher uses this activity name. -->
+        <activity-alias android:name="dev.cobalt.app.LaunchActivity"
+                        android:targetActivity="dev.cobalt.app.MainActivity"
+                        android:exported="true" />
+        {% endif %}
         {% endblock %}
 
         <activity android:name="dev.cobalt.coat.CobaltPictureInPictureActivity"
