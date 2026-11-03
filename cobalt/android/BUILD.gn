@@ -20,7 +20,7 @@ jinja_template("cobalt_manifest") {
   input = "//cobalt/shell/android/shell_apk/AndroidManifest.xml.jinja2"
   output = cobalt_manifest
   variables = [
-    "manifest_package=com.amazon.firetv.youtube",
+    "manifest_package=com.google.android.youtube.tv",
     "build_type=$build_type",
   ]
 }
