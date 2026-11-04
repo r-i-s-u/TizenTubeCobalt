@@ -12,14 +12,8 @@ on:
           - android-arm
           - android-arm64
       build_type:
-        description: 'Build Type'
         required: true
-        default: 'qa'
-        type: choice
-        options:
-          - qa
-          - gold
-          - devel
+        default: 'gold'
       fast_build:
         description: 'Fast Build (symbol_level=0: cuts compile time, RAM, and object file size by ~40%)'
         required: true
