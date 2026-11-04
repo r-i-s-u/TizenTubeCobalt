@@ -11,6 +11,8 @@ on:
         options:
           - android-arm
           - android-arm64
+      build_type:
+        required: true
         default: 'gold'
       fast_build:
         description: 'Fast Build (symbol_level=0: cuts compile time, RAM, and object file size by ~40%)'
