@@ -11,9 +11,6 @@ on:
         options:
           - android-arm
           - android-arm64
-      build_type:
-        required: true
-        default: 'gold'
       fast_build:
         description: 'Fast Build (symbol_level=0: cuts compile time, RAM, and object file size by ~40%)'
         required: true
@@ -30,7 +27,7 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ inputs.platform }} (${{ inputs.build_type }}) [Iter ${{ inputs.run_iteration }}]
+    name: Build ${{ inputs.platform }} (gold) [Iter ${{ inputs.run_iteration }}]
     runs-on: ubuntu-22.04
     timeout-minutes: 360
 
