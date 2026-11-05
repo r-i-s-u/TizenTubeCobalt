@@ -1,4 +1,4 @@
-name: Build Cobalt APK
+name: Build APK
 
 on:
   workflow_dispatch:
@@ -73,10 +73,10 @@ jobs:
         with:
           path: |
             ~/.cache/ccache
-            src/out/${{ inputs.platform }}_${{ inputs.build_type }}
-          key: build-cobalt-${{ inputs.platform }}-${{ inputs.build_type }}-${{ github.run_id }}
+            src/out/${{ inputs.platform }}_gold
+          key: build-cobalt-${{ inputs.platform }}-gold-${{ github.run_id }}
           restore-keys: |
-            build-cobalt-${{ inputs.platform }}-${{ inputs.build_type }}-
+            build-cobalt-${{ inputs.platform }}-gold-
             build-cobalt-${{ inputs.platform }}-
 
       - name: Set up Depot Tools & Sync Dependencies
@@ -120,7 +120,7 @@ jobs:
           export PATH=$PWD/depot_tools:$PATH
           cd src
 
-          OUT_DIR="out/${{ inputs.platform }}_${{ inputs.build_type }}"
+          OUT_DIR="out/${{ inputs.platform }}_gold"
 
           # Configure ccache with content-based compiler hashing to guarantee cache hits across runner VMs
           export CCACHE_DIR=~/.cache/ccache
@@ -136,7 +136,7 @@ jobs:
           ccache -s
 
           echo "====> Generating GN build configuration..."
-          python3 cobalt/build/gn.py -p ${{ inputs.platform }} -c ${{ inputs.build_type }} --no-rbe
+          python3 cobalt/build/gn.py -p ${{ inputs.platform }} -c gold --no-rbe
 
           # Strip heavy debug symbols if fast_build is enabled
           if [ "${{ inputs.fast_build }}" = "true" ]; then
@@ -188,13 +188,13 @@ jobs:
         with:
           path: |
             ~/.cache/ccache
-            src/out/${{ inputs.platform }}_${{ inputs.build_type }}
-          key: build-cobalt-${{ inputs.platform }}-${{ inputs.build_type }}-${{ github.run_id }}
+            src/out/${{ inputs.platform }}_gold
+          key: build-cobalt-${{ inputs.platform }}-gold-${{ github.run_id }}
 
       - name: Inspect generated APKs
         if: always()
         run: |
-          OUT_DIR="src/out/${{ inputs.platform }}_${{ inputs.build_type }}"
+          OUT_DIR="src/out/${{ inputs.platform }}_gold"
           echo "Searching for APK files in: ${OUT_DIR}"
           find "$OUT_DIR" -type f -name '*.apk' -print 2>/dev/null || true
           APK_COUNT=$(find "$OUT_DIR" -type f -name '*.apk' 2>/dev/null | wc -l)
@@ -209,8 +209,8 @@ jobs:
         if: always() && env.HAS_APK == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: cobalt-${{ inputs.platform }}-${{ inputs.build_type }}-apk
-          path: src/out/${{ inputs.platform }}_${{ inputs.build_type }}/**/*.apk
+          name: cobalt-${{ inputs.platform }}-gold-apk
+          path: src/out/${{ inputs.platform }}_gold/**/*.apk
           if-no-files-found: warn
 
       - name: Create or Update GitHub Release
@@ -218,12 +218,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          OUT_DIR="src/out/${{ inputs.platform }}_${{ inputs.build_type }}"
+          OUT_DIR="src/out/${{ inputs.platform }}_gold"
           APK_FILE=$(find "$OUT_DIR" -type f -name 'Cobalt.apk' | head -n 1)
           if [ -n "$APK_FILE" ]; then
-            TAG_NAME="v2.0.3-${{ inputs.build_type }}"
-            RELEASE_TITLE="Cobalt 2.0.3 (${{ inputs.build_type }})"
-            RELEASE_ASSET="Cobalt-${{ inputs.platform }}-${{ inputs.build_type }}.apk"
+            TAG_NAME="v2.0.3"
+            RELEASE_TITLE="YouTube Cobalt"
+            RELEASE_ASSET="Cobalt-${{ inputs.platform }}.apk"
             cp "$APK_FILE" "./$RELEASE_ASSET"
             echo "Publishing GitHub Release: $TAG_NAME with asset: $RELEASE_ASSET"
             gh release view "$TAG_NAME" --repo "${{ github.repository }}" >/dev/null 2>&1 && \
@@ -242,7 +242,7 @@ jobs:
           DURATION=$((END_TIME - START_TIME))
           echo "Total elapsed time: ${DURATION}s"
 
-          APK_COUNT=$(find src/out/${{ inputs.platform }}_${{ inputs.build_type }} -name "*.apk" 2>/dev/null | wc -l)
+          APK_COUNT=$(find src/out/${{ inputs.platform }}_gold -name "*.apk" 2>/dev/null | wc -l)
           if [ ${APK_COUNT} -gt 0 ]; then
             echo "====> SUCCESS: APK was created! No continuation needed."
             exit 0
@@ -262,7 +262,6 @@ jobs:
             gh workflow run "${{ github.workflow }}" \
               --repo "${{ github.repository }}" \
               -f platform="${{ inputs.platform }}" \
-              -f build_type="${{ inputs.build_type }}" \
               -f fast_build="${{ inputs.fast_build }}" \
               -f run_iteration="${NEXT_ITERATION}" \
               --ref "${{ github.ref }}"
